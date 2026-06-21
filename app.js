@@ -165,33 +165,59 @@ async function renderControlTable(){
     byEmployee[p.employeeId].punches.push(p);
   });
 
-  let rows = [];
-  Object.entries(byEmployee).forEach(([empId, data])=>{
-    const get = (type)=> data.punches.find(p=>p.type===type);
-    const inP = get("in"), pauseP = get("pause"), resumeP = get("resume"), outP = get("out");
-
-    let totalMs = 0, openStart = null;
-    data.punches.sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
-    data.punches.forEach(p=>{
-      if(p.type==="in" || p.type==="resume") openStart = p.timestamp.toMillis();
-      else if((p.type==="pause"||p.type==="out") && openStart!==null){
-        totalMs += p.timestamp.toMillis()-openStart;
-        openStart = null;
+  // Découpe la liste de pointages d'un employé en sessions successives.
+  // Une session démarre à un "in" et se termine à un "out" (ou reste ouverte).
+  // "pause"/"resume" à l'intérieur d'une session sont rattachés à celle-ci.
+  function splitIntoSessions(punchList){
+    const sorted = [...punchList].sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+    const sessions = [];
+    let current = null;
+    sorted.forEach(p=>{
+      if(p.type === "in"){
+        current = { in:p, pause:null, resume:null, out:null };
+        sessions.push(current);
+      } else if(current){
+        if(p.type==="pause") current.pause = p;
+        else if(p.type==="resume") current.resume = p;
+        else if(p.type==="out") current.out = p;
+      } else {
+        // pointage orphelin (pause/reprise/sortie sans entrée préalable ce jour-là)
+        current = { in:null, pause:null, resume:null, out:null };
+        if(p.type==="pause") current.pause = p;
+        else if(p.type==="resume") current.resume = p;
+        else if(p.type==="out") current.out = p;
+        sessions.push(current);
       }
     });
+    return sessions;
+  }
 
-    rows.push({
-      name: data.name,
-      inTime: inP ? fmtTime(inP.timestamp.toDate()) : "—",
-      pauseTime: pauseP ? fmtTime(pauseP.timestamp.toDate()) : "—",
-      resumeTime: resumeP ? fmtTime(resumeP.timestamp.toDate()) : "—",
-      outTime: outP ? fmtTime(outP.timestamp.toDate()) : "—",
-      totalMs,
-      complete: !!(inP && outP)
+  function sessionDurationMs(s){
+    let total = 0, openStart = s.in ? s.in.timestamp.toMillis() : null;
+    if(s.pause && openStart!==null){ total += s.pause.timestamp.toMillis()-openStart; openStart=null; }
+    if(s.resume){ openStart = s.resume.timestamp.toMillis(); }
+    if(s.out && openStart!==null){ total += s.out.timestamp.toMillis()-openStart; openStart=null; }
+    return total;
+  }
+
+  let rows = [];
+  Object.entries(byEmployee).forEach(([empId, data])=>{
+    const sessions = splitIntoSessions(data.punches);
+    sessions.forEach((s, idx)=>{
+      rows.push({
+        name: data.name,
+        sessionLabel: sessions.length > 1 ? `Passage ${idx+1}` : "",
+        inTime: s.in ? fmtTime(s.in.timestamp.toDate()) : "—",
+        pauseTime: s.pause ? fmtTime(s.pause.timestamp.toDate()) : "—",
+        resumeTime: s.resume ? fmtTime(s.resume.timestamp.toDate()) : "—",
+        outTime: s.out ? fmtTime(s.out.timestamp.toDate()) : "—",
+        totalMs: sessionDurationMs(s),
+        incomplete: !s.in || !s.out
+      });
     });
   });
 
-  rows.sort((a,b)=>a.name.localeCompare(b.name));
+  rows.sort((a,b)=> a.name.localeCompare(b.name) || (a.inTime||"").localeCompare(b.inTime||""));
   controlCache = rows;
 
   if(rows.length === 0){
@@ -199,18 +225,20 @@ async function renderControlTable(){
   } else {
     tbody.innerHTML = rows.map(r=>`
       <tr>
-        <td><b>${escapeHtml(r.name)}</b></td>
+        <td><b>${escapeHtml(r.name)}</b>${r.sessionLabel ? `<br><span style="font-size:11.5px;color:rgba(30,38,36,0.45);font-weight:600;">${r.sessionLabel}</span>` : ""}</td>
         <td>${r.inTime}</td>
         <td>${r.pauseTime}</td>
         <td>${r.resumeTime}</td>
         <td>${r.outTime}</td>
-        <td>${r.totalMs>0 ? fmtDuration(r.totalMs) : "—"}</td>
+        <td>${r.totalMs>0 ? fmtDuration(r.totalMs) : "—"}${r.incomplete ? ' <span class="pill pill-late" style="margin-left:4px;">incomplet</span>' : ""}</td>
       </tr>`).join("");
   }
 
   const totalDayMs = rows.reduce((sum,r)=>sum+r.totalMs,0);
+  const uniqueEmployees = new Set(rows.map(r=>r.name)).size;
   statsEl.innerHTML = `
-    <div class="stat-card"><div class="stat-num">${rows.length}</div><div class="stat-label">Équipiers présents</div></div>
+    <div class="stat-card"><div class="stat-num">${uniqueEmployees}</div><div class="stat-label">Équipiers présents</div></div>
+    <div class="stat-card"><div class="stat-num">${rows.length}</div><div class="stat-label">Passages enregistrés</div></div>
     <div class="stat-card"><div class="stat-num">${fmtDuration(totalDayMs)}</div><div class="stat-label">Total heures du jour</div></div>
   `;
 }
@@ -237,10 +265,10 @@ document.getElementById("control-date-picker").addEventListener("change", (e)=>{
 document.getElementById("control-export-btn").addEventListener("click", ()=>{
   if(controlCache.length === 0){ showToast("Aucune donnée à exporter"); return; }
   const dayLabel = todayKey(controlDate);
-  let csv = "Équipier;Entrée;Pause;Reprise;Sortie;Total\n";
+  let csv = "Équipier;Passage;Entrée;Pause;Reprise;Sortie;Total\n";
   controlCache.forEach(r=>{
     const total = r.totalMs>0 ? fmtDuration(r.totalMs).replace("h",",") : "";
-    csv += `${r.name};${r.inTime};${r.pauseTime};${r.resumeTime};${r.outTime};${total}\n`;
+    csv += `${r.name};${r.sessionLabel || "1"};${r.inTime};${r.pauseTime};${r.resumeTime};${r.outTime};${total}\n`;
   });
   const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
