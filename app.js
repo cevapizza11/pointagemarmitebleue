@@ -6,12 +6,12 @@
 // ⚠️ Thomas : remplace ces valeurs par celles de TON nouveau projet Firebase
 // (Console Firebase > Paramètres du projet > Tes applications > Config SDK)
 const firebaseConfig = {
-  apiKey: "AIzaSyBZ03rRzX8DL5Xgqn7U1p8PfiL83Zqtmvc",
-  authDomain: "pointagemarmitebleue.firebaseapp.com",
-  projectId: "pointagemarmitebleue",
-  storageBucket: "pointagemarmitebleue.firebasestorage.app",
-  messagingSenderId: "483578019330",
-  appId: "1:483578019330:web:f15b69bfd7d652b773711b"
+  apiKey: "REMPLACE_MOI",
+  authDomain: "REMPLACE_MOI.firebaseapp.com",
+  projectId: "REMPLACE_MOI",
+  storageBucket: "REMPLACE_MOI.appspot.com",
+  messagingSenderId: "REMPLACE_MOI",
+  appId: "REMPLACE_MOI"
 };
 
 firebase.initializeApp(firebaseConfig);
@@ -19,14 +19,14 @@ const db = firebase.firestore();
 
 // Collections Firestore utilisées :
 //   employees   { id, name, pinHash, plannedTime, active, createdAt }
-//   punches     { id, employeeId, employeeName, type ('in'|'pause'|'resume'|'out'), timestamp, isLate }
-//   settings    { id:'general', lateTime, adminPinHash }
+//   punches     { id, employeeId, employeeName, type ('in'|'pause'|'resume'|'out'), timestamp }
+//   settings    { id:'general', adminPinHash }
 
 // ---------- STATE ----------
 let state = {
   employees: [],          // tous les équipiers actifs
   todayPunches: [],        // pointages du jour, en direct
-  settings: { lateTime: "11:00", adminPinHash: null },
+  settings: { adminPinHash: null },
   selectedEmployee: null,  // employé en cours de pointage
   pinBuffer: "",
   pinMode: "check",        // "check" (existant) ou "create" (1ère fois)
@@ -115,12 +115,146 @@ async function loadSettings(){
       await db.collection("settings").doc("general").set(state.settings);
     }
   }catch(e){ console.error("loadSettings", e); }
-  document.getElementById("setting-late-time").value = state.settings.lateTime || "11:00";
 }
 
 // ============================================================
-// EMPLOYEE STATUS HELPERS
+// ADMIN — CONTRÔLE DES POINTAGES (vue jour par jour)
 // ============================================================
+let controlDate = new Date(); // date actuellement affichée dans l'onglet contrôle
+let controlCache = [];        // dernier jeu de lignes calculé, pour export CSV
+
+function fmtControlDateLabel(d){
+  const label = d.toLocaleDateString('fr-FR', { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function isSameDay(a,b){
+  return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+}
+
+async function renderControlTable(){
+  const tbody = document.getElementById("control-table-body");
+  const statsEl = document.getElementById("control-stats");
+  document.getElementById("control-date-label").textContent = fmtControlDateLabel(controlDate);
+  document.getElementById("control-today-btn").style.visibility = isSameDay(controlDate, new Date()) ? "hidden" : "visible";
+
+  tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Chargement…</td></tr>`;
+
+  const start = new Date(controlDate); start.setHours(0,0,0,0);
+  const end = new Date(controlDate); end.setHours(23,59,59,999);
+
+  let snap;
+  try{
+    snap = await db.collection("punches")
+      .where("timestamp",">=", firebase.firestore.Timestamp.fromDate(start))
+      .where("timestamp","<=", firebase.firestore.Timestamp.fromDate(end))
+      .orderBy("timestamp","asc")
+      .get();
+  }catch(e){
+    console.error(e);
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--danger);">Erreur de chargement</td></tr>`;
+    return;
+  }
+
+  const punches = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+  // Regrouper par employé pour ce jour précis
+  const byEmployee = {};
+  punches.forEach(p=>{
+    if(!byEmployee[p.employeeId]) byEmployee[p.employeeId] = { name:p.employeeName, punches:[] };
+    byEmployee[p.employeeId].punches.push(p);
+  });
+
+  let rows = [];
+  Object.entries(byEmployee).forEach(([empId, data])=>{
+    const get = (type)=> data.punches.find(p=>p.type===type);
+    const inP = get("in"), pauseP = get("pause"), resumeP = get("resume"), outP = get("out");
+
+    let totalMs = 0, openStart = null;
+    data.punches.sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+    data.punches.forEach(p=>{
+      if(p.type==="in" || p.type==="resume") openStart = p.timestamp.toMillis();
+      else if((p.type==="pause"||p.type==="out") && openStart!==null){
+        totalMs += p.timestamp.toMillis()-openStart;
+        openStart = null;
+      }
+    });
+
+    rows.push({
+      name: data.name,
+      inTime: inP ? fmtTime(inP.timestamp.toDate()) : "—",
+      pauseTime: pauseP ? fmtTime(pauseP.timestamp.toDate()) : "—",
+      resumeTime: resumeP ? fmtTime(resumeP.timestamp.toDate()) : "—",
+      outTime: outP ? fmtTime(outP.timestamp.toDate()) : "—",
+      totalMs,
+      complete: !!(inP && outP)
+    });
+  });
+
+  rows.sort((a,b)=>a.name.localeCompare(b.name));
+  controlCache = rows;
+
+  if(rows.length === 0){
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Aucun pointage ce jour-là</td></tr>`;
+  } else {
+    tbody.innerHTML = rows.map(r=>`
+      <tr>
+        <td><b>${escapeHtml(r.name)}</b></td>
+        <td>${r.inTime}</td>
+        <td>${r.pauseTime}</td>
+        <td>${r.resumeTime}</td>
+        <td>${r.outTime}</td>
+        <td>${r.totalMs>0 ? fmtDuration(r.totalMs) : "—"}</td>
+      </tr>`).join("");
+  }
+
+  const totalDayMs = rows.reduce((sum,r)=>sum+r.totalMs,0);
+  statsEl.innerHTML = `
+    <div class="stat-card"><div class="stat-num">${rows.length}</div><div class="stat-label">Équipiers présents</div></div>
+    <div class="stat-card"><div class="stat-num">${fmtDuration(totalDayMs)}</div><div class="stat-label">Total heures du jour</div></div>
+  `;
+}
+
+document.getElementById("control-prev-btn").addEventListener("click", ()=>{
+  controlDate.setDate(controlDate.getDate()-1);
+  renderControlTable();
+});
+document.getElementById("control-next-btn").addEventListener("click", ()=>{
+  controlDate.setDate(controlDate.getDate()+1);
+  renderControlTable();
+});
+document.getElementById("control-today-btn").addEventListener("click", ()=>{
+  controlDate = new Date();
+  renderControlTable();
+});
+document.getElementById("control-date-picker").addEventListener("change", (e)=>{
+  if(!e.target.value) return;
+  const [y,m,d] = e.target.value.split("-").map(Number);
+  controlDate = new Date(y, m-1, d);
+  renderControlTable();
+});
+
+document.getElementById("control-export-btn").addEventListener("click", ()=>{
+  if(controlCache.length === 0){ showToast("Aucune donnée à exporter"); return; }
+  const dayLabel = todayKey(controlDate);
+  let csv = "Équipier;Entrée;Pause;Reprise;Sortie;Total\n";
+  controlCache.forEach(r=>{
+    const total = r.totalMs>0 ? fmtDuration(r.totalMs).replace("h",",") : "";
+    csv += `${r.name};${r.inTime};${r.pauseTime};${r.resumeTime};${r.outTime};${total}\n`;
+  });
+  const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `pointage_${dayLabel}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast("Export CSV téléchargé ✓");
+});
+
+
 // Renvoie le dernier statut du jour pour un employé : 'out' | 'in' | 'pause'
 function lastStatusFor(employeeId){
   const punches = state.todayPunches.filter(p=>p.employeeId===employeeId);
@@ -352,22 +486,13 @@ function showChoiceForPunch(emp, actions){
 
 async function doPunch(emp, type){
   const now = new Date();
-  let isLate = false;
-
-  if(type === "in"){
-    const lateTime = state.settings.lateTime || "11:00";
-    const [lh, lm] = lateTime.split(":").map(Number);
-    const limit = new Date(now); limit.setHours(lh, lm, 0, 0);
-    if(now > limit) isLate = true;
-  }
 
   try{
     await db.collection("punches").add({
       employeeId: emp.id,
       employeeName: emp.name,
       type: type,
-      timestamp: firebase.firestore.Timestamp.fromDate(now),
-      isLate: isLate
+      timestamp: firebase.firestore.Timestamp.fromDate(now)
     });
   }catch(e){
     console.error("doPunch error", e);
@@ -376,10 +501,10 @@ async function doPunch(emp, type){
     return;
   }
 
-  showConfirmScreen(emp, type, now, isLate);
+  showConfirmScreen(emp, type, now);
 }
 
-function showConfirmScreen(emp, type, time, isLate){
+function showConfirmScreen(emp, type, time){
   const icon = document.getElementById("confirm-icon");
   const title = document.getElementById("confirm-title");
   const lateWrap = document.getElementById("confirm-late-wrap");
@@ -398,7 +523,7 @@ function showConfirmScreen(emp, type, time, isLate){
   title.textContent = TITLES[type];
   document.getElementById("confirm-name").textContent = emp.name;
   document.getElementById("confirm-time").textContent = fmtTime(time);
-  lateWrap.innerHTML = isLate ? `<div class="confirm-late">⏱ Arrivée après l'heure prévue</div>` : "";
+  lateWrap.innerHTML = "";
 
   showScreen("screen-confirm");
   document.getElementById("pin-dots").style.display = "flex";
@@ -454,6 +579,8 @@ function enterAdmin(){
   renderTodayTable();
   renderEmployeesTable();
   populateReportMonths();
+  controlDate = new Date();
+  renderControlTable();
 }
 
 document.getElementById("admin-exit-btn").addEventListener("click", ()=>{
@@ -469,6 +596,7 @@ document.querySelectorAll(".admin-tab").forEach(tab=>{
     tab.classList.add("active");
     document.getElementById("tab-"+tab.dataset.tab).classList.add("active");
     if(tab.dataset.tab === "reports") renderReportTable();
+    if(tab.dataset.tab === "control") renderControlTable();
   });
 });
 
@@ -485,7 +613,7 @@ function renderTodayTable(){
     return;
   }
 
-  let presentCount = 0, lateCount = 0;
+  let presentCount = 0;
 
   tbody.innerHTML = state.employees.map(emp=>{
     const punches = state.todayPunches.filter(p=>p.employeeId===emp.id);
@@ -493,7 +621,6 @@ function renderTodayTable(){
     const inP = get("in"), pauseP = get("pause"), resumeP = get("resume"), outP = get("out");
     const {status} = lastStatusFor(emp.id);
     if(status !== "out" || inP) presentCount++;
-    if(inP && inP.isLate) lateCount++;
 
     const statusPill = status==="in" ? `<span class="pill pill-in">En service</span>`
       : status==="pause" ? `<span class="pill pill-pause">En pause</span>`
@@ -504,7 +631,7 @@ function renderTodayTable(){
 
     return `<tr>
       <td><b>${escapeHtml(emp.name)}</b></td>
-      <td>${inP ? fmtTime(inP.timestamp.toDate()) : "—"} ${inP && inP.isLate ? '<span class="pill pill-late">retard</span>' : ""}</td>
+      <td>${inP ? fmtTime(inP.timestamp.toDate()) : "—"}</td>
       <td>${pauseP ? fmtTime(pauseP.timestamp.toDate()) : "—"}</td>
       <td>${resumeP ? fmtTime(resumeP.timestamp.toDate()) : "—"}</td>
       <td>${outP ? fmtTime(outP.timestamp.toDate()) : "—"}</td>
@@ -515,7 +642,6 @@ function renderTodayTable(){
 
   statsEl.innerHTML = `
     <div class="stat-card"><div class="stat-num">${presentCount}</div><div class="stat-label">Présents aujourd'hui</div></div>
-    <div class="stat-card"><div class="stat-num">${lateCount}</div><div class="stat-label">Retards aujourd'hui</div></div>
     <div class="stat-card"><div class="stat-num">${state.employees.length}</div><div class="stat-label">Équipiers actifs</div></div>
   `;
 }
@@ -670,19 +796,16 @@ async function renderReportTable(){
   });
 
   let rows = [];
-  let totalHoursAll = 0, totalLateAll = 0;
+  let totalHoursAll = 0;
 
   Object.entries(byEmployee).forEach(([empId, data])=>{
-    let totalMs = 0, lateCount = 0, daysWorked = 0;
+    let totalMs = 0, daysWorked = 0;
     Object.values(data.byDay).forEach(dayPunches=>{
       daysWorked++;
       dayPunches.sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
       let openStart = null;
       dayPunches.forEach(p=>{
-        if(p.type==="in"){
-          if(p.isLate) lateCount++;
-          openStart = p.timestamp.toMillis();
-        } else if(p.type==="resume"){
+        if(p.type==="in" || p.type==="resume"){
           openStart = p.timestamp.toMillis();
         } else if((p.type==="pause"||p.type==="out") && openStart!==null){
           totalMs += p.timestamp.toMillis() - openStart;
@@ -691,28 +814,25 @@ async function renderReportTable(){
       });
     });
     totalHoursAll += totalMs;
-    totalLateAll += lateCount;
-    rows.push({ name:data.name, daysWorked, totalMs, lateCount });
+    rows.push({ name:data.name, daysWorked, totalMs });
   });
 
   rows.sort((a,b)=>a.name.localeCompare(b.name));
   reportCache = rows;
 
   if(rows.length === 0){
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Aucun pointage ce mois-ci</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Aucun pointage ce mois-ci</td></tr>`;
   } else {
     tbody.innerHTML = rows.map(r=>`
       <tr>
         <td><b>${escapeHtml(r.name)}</b></td>
         <td>${r.daysWorked}</td>
         <td>${fmtDuration(r.totalMs)}</td>
-        <td>${r.lateCount > 0 ? `<span class="pill pill-late">${r.lateCount}</span>` : "0"}</td>
       </tr>`).join("");
   }
 
   document.getElementById("report-stats").innerHTML = `
     <div class="stat-card"><div class="stat-num">${fmtDuration(totalHoursAll)}</div><div class="stat-label">Total heures équipe</div></div>
-    <div class="stat-card"><div class="stat-num">${totalLateAll}</div><div class="stat-label">Retards ce mois</div></div>
     <div class="stat-card"><div class="stat-num">${rows.length}</div><div class="stat-label">Équipiers actifs ce mois</div></div>
   `;
 }
@@ -720,9 +840,9 @@ async function renderReportTable(){
 document.getElementById("export-csv-btn").addEventListener("click", ()=>{
   if(reportCache.length === 0){ showToast("Aucune donnée à exporter"); return; }
   const monthLabel = document.getElementById("report-month").selectedOptions[0]?.textContent || "rapport";
-  let csv = "Équipier;Jours travaillés;Heures totales;Retards\n";
+  let csv = "Équipier;Jours travaillés;Heures totales\n";
   reportCache.forEach(r=>{
-    csv += `${r.name};${r.daysWorked};${fmtDuration(r.totalMs).replace("h",",")};${r.lateCount}\n`;
+    csv += `${r.name};${r.daysWorked};${fmtDuration(r.totalMs).replace("h",",")}\n`;
   });
   const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
   const url = URL.createObjectURL(blob);
@@ -740,14 +860,11 @@ document.getElementById("export-csv-btn").addEventListener("click", ()=>{
 // ADMIN — SETTINGS
 // ============================================================
 document.getElementById("save-settings-btn").addEventListener("click", async ()=>{
-  const lateTime = document.getElementById("setting-late-time").value;
   const newAdminPin = document.getElementById("setting-admin-pin").value.trim();
+  if(!newAdminPin){ showToast("Entrez un nouveau code admin pour le modifier"); return; }
+  if(newAdminPin.length < 4){ showToast("Le code admin doit faire au moins 4 chiffres"); return; }
 
-  const update = { lateTime };
-  if(newAdminPin){
-    if(newAdminPin.length < 4){ showToast("Le code admin doit faire au moins 4 chiffres"); return; }
-    update.adminPinHash = await sha256("ADMIN:" + newAdminPin);
-  }
+  const update = { adminPinHash: await sha256("ADMIN:" + newAdminPin) };
 
   try{
     await db.collection("settings").doc("general").set(update, {merge:true});

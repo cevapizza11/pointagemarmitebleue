@@ -292,6 +292,7 @@
     </div>
     <div class="admin-tabs">
       <div class="admin-tab active" data-tab="today">Aujourd'hui</div>
+      <div class="admin-tab" data-tab="control">Contrôle des pointages</div>
       <div class="admin-tab" data-tab="employees">Équipiers</div>
       <div class="admin-tab" data-tab="reports">Rapports mensuels</div>
       <div class="admin-tab" data-tab="settings">Réglages</div>
@@ -307,6 +308,25 @@
         <table>
           <thead><tr><th>Équipier</th><th>Entrée</th><th>Pause</th><th>Reprise</th><th>Sortie</th><th>Total</th><th>Statut</th></tr></thead>
           <tbody id="today-table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="admin-section" id="tab-control">
+        <div class="admin-row-title">
+          <div class="admin-h">Contrôle des pointages</div>
+          <button class="btn btn-primary btn-sm" id="control-export-btn">Exporter CSV</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap;">
+          <button class="btn btn-ghost btn-sm" id="control-prev-btn">‹ Jour précédent</button>
+          <div id="control-date-label" style="font-family:'Big Shoulders Display',sans-serif;font-size:18px;font-weight:700;color:var(--teal);min-width:240px;text-align:center;">—</div>
+          <button class="btn btn-ghost btn-sm" id="control-next-btn">Jour suivant ›</button>
+          <button class="btn btn-ghost btn-sm" id="control-today-btn">Aujourd'hui</button>
+          <input type="date" id="control-date-picker" style="border:1.5px solid var(--line);border-radius:9px;padding:9px 12px;font-family:Inter;font-size:14px;margin-left:auto;">
+        </div>
+        <div class="stat-cards" id="control-stats"></div>
+        <table>
+          <thead><tr><th>Équipier</th><th>Entrée</th><th>Pause</th><th>Reprise</th><th>Sortie</th><th>Total</th></tr></thead>
+          <tbody id="control-table-body"></tbody>
         </table>
       </div>
 
@@ -340,11 +360,7 @@
         <div class="admin-h" style="margin-bottom:18px;">Réglages</div>
         <div style="background:#fff;border-radius:14px;padding:22px;max-width:420px;box-shadow:0 2px 8px rgba(16,37,40,0.06);">
           <div class="field">
-            <label>Heure limite avant retard (entrée)</label>
-            <input type="time" id="setting-late-time" value="11:00">
-          </div>
-          <div class="field">
-            <label>Code admin (4 à 6 chiffres)</label>
+            <label>Nouveau code admin (4 à 6 chiffres)</label>
             <input type="password" id="setting-admin-pin" placeholder="••••" maxlength="6" inputmode="numeric">
           </div>
           <button class="btn btn-primary" id="save-settings-btn">Enregistrer</button>
