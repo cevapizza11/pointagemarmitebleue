@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pointeuse · La Marmite Bleue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;700;800&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ivory:#FAF6EE;
+    --ivory-dim:#F0E9DA;
+    --teal:#1B3A3F;
+    --teal-deep:#102528;
+    --terracotta:#C1602F;
+    --terracotta-soft:#E0916A;
+    --ok:#4C7A5E;
+    --warn:#C1602F;
+    --danger:#A8412B;
+    --ink:#1E2624;
+    --line:rgba(27,58,63,0.14);
+    --shadow:0 12px 32px rgba(16,37,40,0.18);
+    --radius:18px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0;padding:0;height:100%;
+    background:var(--ivory);
+    color:var(--ink);
+    font-family:'Inter',sans-serif;
+    overflow:hidden;
+    user-select:none;
+  }
+  #app{height:100vh;width:100vw;position:relative;}
+  .screen{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;
+    opacity:0;visibility:hidden;
+    transition:opacity .35s ease;
+  }
+  .screen.active{opacity:1;visibility:visible;}
+
+  /* ---------- TOPBAR ---------- */
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:18px 28px;
+    background:var(--teal);
+    color:var(--ivory);
+    flex-shrink:0;
+  }
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-mark{
+    width:38px;height:38px;border-radius:50%;
+    background:var(--terracotta);
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Big Shoulders Display',sans-serif;
+    font-weight:800;font-size:18px;color:var(--ivory);
+    flex-shrink:0;
+  }
+  .brand-text{font-family:'Big Shoulders Display',sans-serif;font-weight:700;font-size:20px;letter-spacing:.03em;line-height:1;}
+  .brand-text span{display:block;font-family:'Cormorant Garamond',serif;font-style:italic;font-weight:500;font-size:13px;letter-spacing:.04em;color:var(--terracotta-soft);margin-top:2px;}
+  .clock{font-family:'Big Shoulders Display',sans-serif;font-size:26px;font-weight:700;letter-spacing:.02em;text-align:right;line-height:1;}
+  .clock .date{display:block;font-family:'Inter',sans-serif;font-size:12px;font-weight:500;color:rgba(250,246,238,0.6);margin-top:4px;letter-spacing:.03em;text-transform:capitalize;}
+  .admin-dot{
+    width:10px;height:10px;border-radius:50%;background:rgba(250,246,238,0.25);
+    position:absolute;top:14px;right:14px;cursor:pointer;
+  }
+
+  /* ---------- HOME / EMPLOYEE GRID ---------- */
+  #screen-home{background:var(--ivory);}
+  .home-body{flex:1;overflow-y:auto;padding:24px 28px 36px;}
+  .home-title{font-family:'Cormorant Garamond',serif;font-style:italic;font-size:19px;color:var(--teal);opacity:.75;margin:4px 0 18px;text-align:center;}
+  .emp-grid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+    gap:16px;max-width:980px;margin:0 auto;
+  }
+  .emp-card{
+    background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px 14px;display:flex;flex-direction:column;align-items:center;gap:10px;
+    cursor:pointer;transition:transform .12s ease, box-shadow .12s ease;
+    box-shadow:0 2px 8px rgba(16,37,40,0.06);
+  }
+  .emp-card:active{transform:scale(0.96);box-shadow:var(--shadow);}
+  .emp-avatar{
+    width:56px;height:56px;border-radius:50%;
+    background:var(--teal);color:var(--ivory);
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Big Shoulders Display',sans-serif;font-weight:700;font-size:20px;
+    flex-shrink:0;
+  }
+  .emp-name{font-weight:600;font-size:15px;text-align:center;line-height:1.25;}
+  .emp-status{
+    font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+    padding:3px 10px;border-radius:20px;
+  }
+  .status-out{background:var(--ivory-dim);color:rgba(30,38,36,0.45);}
+  .status-in{background:rgba(76,122,94,0.14);color:var(--ok);}
+  .status-pause{background:rgba(193,96,47,0.14);color:var(--terracotta);}
+
+  .empty-state{text-align:center;padding:60px 20px;color:rgba(30,38,36,0.5);}
+  .empty-state b{display:block;font-family:'Big Shoulders Display',sans-serif;font-size:20px;color:var(--teal);margin-bottom:6px;}
+
+  /* ---------- PIN SCREEN ---------- */
+  #screen-pin{background:var(--teal-deep);align-items:center;justify-content:center;}
+  .pin-wrap{
+    width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;
+    padding:0 24px;
+  }
+  .pin-back{
+    align-self:flex-start;color:rgba(250,246,238,0.55);font-size:14px;font-weight:600;
+    margin-bottom:18px;cursor:pointer;display:flex;align-items:center;gap:6px;
+  }
+  .pin-avatar{
+    width:74px;height:74px;border-radius:50%;background:var(--terracotta);
+    display:flex;align-items:center;justify-content:center;color:var(--ivory);
+    font-family:'Big Shoulders Display',sans-serif;font-weight:700;font-size:26px;
+    margin-bottom:14px;
+  }
+  .pin-name{font-family:'Big Shoulders Display',sans-serif;color:var(--ivory);font-size:24px;font-weight:700;margin-bottom:2px;}
+  .pin-sub{font-family:'Cormorant Garamond',serif;font-style:italic;color:rgba(250,246,238,0.55);font-size:14px;margin-bottom:26px;text-align:center;}
+  .pin-dots{display:flex;gap:14px;margin-bottom:30px;}
+  .pin-dot{width:16px;height:16px;border-radius:50%;border:2px solid rgba(250,246,238,0.4);transition:.15s;}
+  .pin-dot.filled{background:var(--terracotta-soft);border-color:var(--terracotta-soft);}
+  .pin-dot.error{background:var(--danger);border-color:var(--danger);}
+  .pin-msg{height:20px;font-size:13px;font-weight:600;color:var(--terracotta-soft);margin-bottom:14px;text-align:center;}
+  .numpad{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;width:100%;}
+  .num-btn{
+    aspect-ratio:1;border:none;border-radius:50%;
+    background:rgba(250,246,238,0.06);color:var(--ivory);
+    font-family:'Big Shoulders Display',sans-serif;font-size:24px;font-weight:600;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    transition:background .1s;
+  }
+  .num-btn:active{background:rgba(250,246,238,0.18);}
+  .num-btn.ghost{background:transparent;color:rgba(250,246,238,0.4);font-size:14px;font-weight:600;}
+
+  /* ---------- CONFIRM SCREEN ---------- */
+  #screen-confirm{background:var(--teal-deep);align-items:center;justify-content:center;}
+  .confirm-box{text-align:center;color:var(--ivory);padding:0 30px;}
+  .confirm-icon{
+    width:84px;height:84px;border-radius:50%;margin:0 auto 22px;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .confirm-icon.in{background:rgba(76,122,94,0.18);}
+  .confirm-icon.out{background:rgba(168,65,43,0.18);}
+  .confirm-icon.pause{background:rgba(193,96,47,0.18);}
+  .confirm-icon svg{width:40px;height:40px;}
+  .confirm-title{font-family:'Big Shoulders Display',sans-serif;font-size:30px;font-weight:700;margin-bottom:6px;}
+  .confirm-name{font-size:16px;color:rgba(250,246,238,0.7);margin-bottom:4px;}
+  .confirm-time{font-family:'Big Shoulders Display',sans-serif;font-size:46px;font-weight:700;color:var(--terracotta-soft);margin:14px 0;}
+  .confirm-late{
+    display:inline-block;margin-top:6px;padding:6px 16px;border-radius:20px;
+    background:rgba(168,65,43,0.2);color:#E0916A;font-size:13px;font-weight:700;
+  }
+
+  /* ---------- ADMIN ---------- */
+  #screen-admin{background:var(--ivory);}
+  .admin-tabs{display:flex;gap:6px;padding:14px 24px 0;background:var(--teal);}
+  .admin-tab{
+    padding:10px 18px;border-radius:10px 10px 0 0;font-size:13px;font-weight:600;
+    color:rgba(250,246,238,0.55);cursor:pointer;background:transparent;
+  }
+  .admin-tab.active{background:var(--ivory);color:var(--teal);}
+  .admin-body{flex:1;overflow-y:auto;padding:24px 28px 40px;}
+  .admin-section{display:none;}
+  .admin-section.active{display:block;}
+  .admin-row-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;}
+  .admin-h{font-family:'Big Shoulders Display',sans-serif;font-size:22px;font-weight:700;color:var(--teal);}
+  .btn{
+    border:none;border-radius:10px;padding:11px 18px;font-weight:600;font-size:14px;
+    cursor:pointer;font-family:'Inter',sans-serif;
+  }
+  .btn-primary{background:var(--terracotta);color:#fff;}
+  .btn-ghost{background:transparent;color:var(--teal);border:1.5px solid var(--line);}
+  .btn-danger{background:transparent;color:var(--danger);border:1.5px solid rgba(168,65,43,0.3);}
+  .btn-sm{padding:7px 12px;font-size:12.5px;border-radius:8px;}
+
+  table{width:100%;border-collapse:collapse;background:#fff;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(16,37,40,0.06);}
+  th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em;color:rgba(30,38,36,0.45);padding:12px 14px;background:var(--ivory-dim);font-weight:700;}
+  td{padding:13px 14px;font-size:14px;border-top:1px solid var(--line);}
+  tr:hover td{background:rgba(193,96,47,0.04);}
+  .pill{font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:.02em;}
+  .pill-in{background:rgba(76,122,94,0.14);color:var(--ok);}
+  .pill-out{background:var(--ivory-dim);color:rgba(30,38,36,0.45);}
+  .pill-pause{background:rgba(193,96,47,0.14);color:var(--terracotta);}
+  .pill-late{background:rgba(168,65,43,0.12);color:var(--danger);}
+
+  .modal-overlay{
+    position:fixed;inset:0;background:rgba(16,37,40,0.55);
+    display:flex;align-items:center;justify-content:center;z-index:200;
+    opacity:0;visibility:hidden;transition:.2s;padding:20px;
+  }
+  .modal-overlay.show{opacity:1;visibility:visible;}
+  .modal{background:#fff;border-radius:18px;padding:26px;max-width:420px;width:100%;box-shadow:var(--shadow);max-height:88vh;overflow-y:auto;}
+  .modal h3{font-family:'Big Shoulders Display',sans-serif;font-size:20px;color:var(--teal);margin:0 0 16px;}
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12.5px;font-weight:600;color:rgba(30,38,36,0.6);margin-bottom:6px;}
+  .field input,.field select{
+    width:100%;padding:11px 12px;border:1.5px solid var(--line);border-radius:9px;
+    font-size:15px;font-family:'Inter',sans-serif;background:var(--ivory);
+  }
+  .field input:focus,.field select:focus{outline:none;border-color:var(--terracotta);}
+  .modal-actions{display:flex;gap:10px;margin-top:18px;justify-content:flex-end;}
+
+  .stat-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:24px;}
+  .stat-card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 2px 8px rgba(16,37,40,0.06);}
+  .stat-num{font-family:'Big Shoulders Display',sans-serif;font-size:28px;font-weight:700;color:var(--teal);}
+  .stat-label{font-size:12px;color:rgba(30,38,36,0.5);margin-top:2px;}
+
+  .toast{
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);
+    background:var(--teal-deep);color:var(--ivory);padding:13px 22px;border-radius:12px;
+    font-size:14px;font-weight:600;box-shadow:var(--shadow);z-index:300;
+    opacity:0;transition:.25s;pointer-events:none;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  .lock-screen{position:fixed;inset:0;background:var(--teal-deep);display:flex;align-items:center;justify-content:center;z-index:500;flex-direction:column;}
+  .lock-screen input{
+    width:200px;text-align:center;font-size:24px;letter-spacing:.3em;padding:14px;
+    border-radius:10px;border:none;margin:18px 0;background:rgba(250,246,238,0.1);color:#fff;
+  }
+  .lock-screen input:focus{outline:2px solid var(--terracotta);}
+
+  ::-webkit-scrollbar{width:8px;}
+  ::-webkit-scrollbar-thumb{background:rgba(27,58,63,0.2);border-radius:10px;}
+
+  @media (max-width:480px){
+    .topbar{padding:14px 18px;}
+    .clock{font-size:21px;}
+    .home-body{padding:18px 16px 30px;}
+    .emp-grid{grid-template-columns:repeat(2,1fr);gap:12px;}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== HOME SCREEN ===================== -->
+  <div class="screen active" id="screen-home">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">MB</div>
+        <div class="brand-text">LA MARMITE BLEUE<span>Pointage équipe</span></div>
+      </div>
+      <div class="clock" id="home-clock">--:--<span class="date" id="home-date">—</span></div>
+      <div class="admin-dot" id="admin-dot-trigger" title=""></div>
+    </div>
+    <div class="home-body">
+      <div class="home-title">Touchez votre nom pour pointer</div>
+      <div class="emp-grid" id="emp-grid"></div>
+    </div>
+  </div>
+
+  <!-- ===================== PIN SCREEN ===================== -->
+  <div class="screen" id="screen-pin">
+    <div class="pin-wrap">
+      <div class="pin-back" id="pin-back-btn">‹ Retour</div>
+      <div class="pin-avatar" id="pin-avatar">--</div>
+      <div class="pin-name" id="pin-name">—</div>
+      <div class="pin-sub" id="pin-sub">Entrez votre code</div>
+      <div class="pin-dots" id="pin-dots">
+        <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+      </div>
+      <div class="pin-msg" id="pin-msg"></div>
+      <div class="numpad" id="numpad"></div>
+    </div>
+  </div>
+
+  <!-- ===================== CONFIRM SCREEN ===================== -->
+  <div class="screen" id="screen-confirm">
+    <div class="confirm-box">
+      <div class="confirm-icon" id="confirm-icon"></div>
+      <div class="confirm-title" id="confirm-title">Pointage enregistré</div>
+      <div class="confirm-name" id="confirm-name">—</div>
+      <div class="confirm-time" id="confirm-time">--:--</div>
+      <div id="confirm-late-wrap"></div>
+    </div>
+  </div>
+
+  <!-- ===================== ADMIN SCREEN ===================== -->
+  <div class="screen" id="screen-admin">
+    <div class="topbar">
+      <div class="brand">
+        <div class="brand-mark">MB</div>
+        <div class="brand-text">ADMINISTRATION<span>La Marmite Bleue</span></div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;">
+        <button class="btn btn-ghost btn-sm" id="admin-exit-btn">Fermer</button>
+      </div>
+    </div>
+    <div class="admin-tabs">
+      <div class="admin-tab active" data-tab="today">Aujourd'hui</div>
+      <div class="admin-tab" data-tab="employees">Équipiers</div>
+      <div class="admin-tab" data-tab="reports">Rapports mensuels</div>
+      <div class="admin-tab" data-tab="settings">Réglages</div>
+    </div>
+    <div class="admin-body">
+
+      <div class="admin-section active" id="tab-today">
+        <div class="admin-row-title">
+          <div class="admin-h">Pointages du jour</div>
+          <button class="btn btn-ghost btn-sm" id="refresh-today-btn">Actualiser</button>
+        </div>
+        <div class="stat-cards" id="today-stats"></div>
+        <table>
+          <thead><tr><th>Équipier</th><th>Entrée</th><th>Pause</th><th>Reprise</th><th>Sortie</th><th>Total</th><th>Statut</th></tr></thead>
+          <tbody id="today-table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="admin-section" id="tab-employees">
+        <div class="admin-row-title">
+          <div class="admin-h">Équipiers</div>
+          <button class="btn btn-primary btn-sm" id="add-employee-btn">+ Ajouter un équipier</button>
+        </div>
+        <table>
+          <thead><tr><th>Nom</th><th>PIN défini</th><th>Heure prévue</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="employees-table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="admin-section" id="tab-reports">
+        <div class="admin-row-title">
+          <div class="admin-h">Rapport mensuel</div>
+          <div style="display:flex;gap:10px;">
+            <select id="report-month" class="btn-ghost" style="border:1.5px solid var(--line);border-radius:10px;padding:9px 14px;font-family:Inter;font-size:14px;"></select>
+            <button class="btn btn-primary btn-sm" id="export-csv-btn">Exporter CSV</button>
+          </div>
+        </div>
+        <div class="stat-cards" id="report-stats"></div>
+        <table>
+          <thead><tr><th>Équipier</th><th>Jours travaillés</th><th>Heures totales</th><th>Retards</th></tr></thead>
+          <tbody id="report-table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="admin-section" id="tab-settings">
+        <div class="admin-h" style="margin-bottom:18px;">Réglages</div>
+        <div style="background:#fff;border-radius:14px;padding:22px;max-width:420px;box-shadow:0 2px 8px rgba(16,37,40,0.06);">
+          <div class="field">
+            <label>Heure limite avant retard (entrée)</label>
+            <input type="time" id="setting-late-time" value="11:00">
+          </div>
+          <div class="field">
+            <label>Code admin (4 à 6 chiffres)</label>
+            <input type="password" id="setting-admin-pin" placeholder="••••" maxlength="6" inputmode="numeric">
+          </div>
+          <button class="btn btn-primary" id="save-settings-btn">Enregistrer</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===================== LOCK SCREEN (admin PIN gate) ===================== -->
+  <div class="lock-screen" id="lock-screen" style="display:none;">
+    <div style="color:rgba(250,246,238,0.5);font-family:'Cormorant Garamond',serif;font-style:italic;font-size:15px;">Accès administration</div>
+    <input type="password" id="lock-input" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="Code admin">
+    <div style="display:flex;gap:10px;">
+      <button class="btn btn-ghost" id="lock-cancel-btn" style="color:rgba(250,246,238,0.6);border-color:rgba(250,246,238,0.2);">Annuler</button>
+      <button class="btn btn-primary" id="lock-confirm-btn">Valider</button>
+    </div>
+    <div style="color:#E0916A;font-size:13px;height:20px;margin-top:8px;" id="lock-error"></div>
+  </div>
+
+  <!-- ===================== EMPLOYEE MODAL ===================== -->
+  <div class="modal-overlay" id="employee-modal">
+    <div class="modal">
+      <h3 id="employee-modal-title">Ajouter un équipier</h3>
+      <input type="hidden" id="emp-id-field">
+      <div class="field">
+        <label>Prénom et nom</label>
+        <input type="text" id="emp-name-field" placeholder="Ex : Léa Dupont">
+      </div>
+      <div class="field">
+        <label>Heure d'arrivée prévue (optionnel)</label>
+        <input type="time" id="emp-time-field">
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="emp-modal-cancel">Annuler</button>
+        <button class="btn btn-primary" id="emp-modal-save">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
