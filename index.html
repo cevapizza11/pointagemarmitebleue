@@ -186,6 +186,18 @@
   .pill-pause{background:rgba(193,96,47,0.14);color:var(--terracotta);}
   .pill-late{background:rgba(168,65,43,0.12);color:var(--danger);}
 
+  .punch-cell{display:flex;align-items:center;gap:6px;}
+  .punch-edit-btn{
+    border:none;background:transparent;cursor:pointer;color:rgba(30,38,36,0.35);
+    font-size:13px;padding:2px 5px;border-radius:6px;line-height:1;
+  }
+  .punch-edit-btn:hover,.punch-edit-btn:active{background:rgba(193,96,47,0.12);color:var(--terracotta);}
+  .punch-add-btn{
+    border:1.5px dashed rgba(27,58,63,0.25);background:transparent;color:rgba(30,38,36,0.4);
+    cursor:pointer;font-size:12px;padding:4px 9px;border-radius:8px;font-family:'Inter',sans-serif;font-weight:600;
+  }
+  .punch-add-btn:hover,.punch-add-btn:active{border-color:var(--terracotta);color:var(--terracotta);background:rgba(193,96,47,0.06);}
+
   .modal-overlay{
     position:fixed;inset:0;background:rgba(16,37,40,0.55);
     display:flex;align-items:center;justify-content:center;z-index:200;
@@ -397,6 +409,28 @@
       <div class="modal-actions">
         <button class="btn btn-ghost" id="emp-modal-cancel">Annuler</button>
         <button class="btn btn-primary" id="emp-modal-save">Enregistrer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== PUNCH EDIT/ADD MODAL ===================== -->
+  <div class="modal-overlay" id="punch-modal">
+    <div class="modal">
+      <h3 id="punch-modal-title">Modifier le pointage</h3>
+      <input type="hidden" id="punch-modal-id">
+      <input type="hidden" id="punch-modal-employee">
+      <input type="hidden" id="punch-modal-type">
+      <input type="hidden" id="punch-modal-mode">
+      <div class="field">
+        <label>Heure</label>
+        <input type="time" id="punch-modal-time">
+      </div>
+      <div class="modal-actions" style="justify-content:space-between;">
+        <button class="btn btn-danger" id="punch-modal-delete-btn">Supprimer</button>
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-ghost" id="punch-modal-cancel">Annuler</button>
+          <button class="btn btn-primary" id="punch-modal-save">Enregistrer</button>
+        </div>
       </div>
     </div>
   </div>

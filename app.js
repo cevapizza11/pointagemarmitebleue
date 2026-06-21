@@ -205,8 +205,10 @@ async function renderControlTable(){
     const sessions = splitIntoSessions(data.punches);
     sessions.forEach((s, idx)=>{
       rows.push({
+        employeeId: empId,
         name: data.name,
         sessionLabel: sessions.length > 1 ? `Passage ${idx+1}` : "",
+        inP: s.in, pauseP: s.pause, resumeP: s.resume, outP: s.out,
         inTime: s.in ? fmtTime(s.in.timestamp.toDate()) : "—",
         pauseTime: s.pause ? fmtTime(s.pause.timestamp.toDate()) : "—",
         resumeTime: s.resume ? fmtTime(s.resume.timestamp.toDate()) : "—",
@@ -221,17 +223,36 @@ async function renderControlTable(){
   controlCache = rows;
 
   if(rows.length === 0){
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Aucun pointage ce jour-là</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Aucun pointage ce jour-là</td></tr>`;
   } else {
-    tbody.innerHTML = rows.map(r=>`
+    tbody.innerHTML = rows.map((r,i)=>{
+      const cell = (punch, time, type, label)=>{
+        if(punch){
+          return `<div class="punch-cell">
+            <span>${time}</span>
+            <button class="punch-edit-btn" data-row="${i}" data-field="${type}" title="Modifier ${label}">✎</button>
+          </div>`;
+        } else {
+          return `<button class="punch-add-btn" data-row="${i}" data-field="${type}" title="Ajouter ${label}">+ ${label}</button>`;
+        }
+      };
+      return `
       <tr>
         <td><b>${escapeHtml(r.name)}</b>${r.sessionLabel ? `<br><span style="font-size:11.5px;color:rgba(30,38,36,0.45);font-weight:600;">${r.sessionLabel}</span>` : ""}</td>
-        <td>${r.inTime}</td>
-        <td>${r.pauseTime}</td>
-        <td>${r.resumeTime}</td>
-        <td>${r.outTime}</td>
+        <td>${cell(r.inP, r.inTime, "in", "Entrée")}</td>
+        <td>${cell(r.pauseP, r.pauseTime, "pause", "Pause")}</td>
+        <td>${cell(r.resumeP, r.resumeTime, "resume", "Reprise")}</td>
+        <td>${cell(r.outP, r.outTime, "out", "Sortie")}</td>
         <td>${r.totalMs>0 ? fmtDuration(r.totalMs) : "—"}${r.incomplete ? ' <span class="pill pill-late" style="margin-left:4px;">incomplet</span>' : ""}</td>
-      </tr>`).join("");
+      </tr>`;
+    }).join("");
+
+    tbody.querySelectorAll(".punch-edit-btn").forEach(btn=>{
+      btn.addEventListener("click", ()=>openPunchEditModal(rows[btn.dataset.row], btn.dataset.field));
+    });
+    tbody.querySelectorAll(".punch-add-btn").forEach(btn=>{
+      btn.addEventListener("click", ()=>openPunchAddModal(rows[btn.dataset.row], btn.dataset.field));
+    });
   }
 
   const totalDayMs = rows.reduce((sum,r)=>sum+r.totalMs,0);
@@ -260,6 +281,92 @@ document.getElementById("control-date-picker").addEventListener("change", (e)=>{
   const [y,m,d] = e.target.value.split("-").map(Number);
   controlDate = new Date(y, m-1, d);
   renderControlTable();
+});
+
+// ---------- ÉDITION / AJOUT / SUPPRESSION D'UN POINTAGE ----------
+const FIELD_LABELS = { in:"Entrée", pause:"Pause", resume:"Reprise", out:"Sortie" };
+const FIELD_KEY = { in:"inP", pause:"pauseP", resume:"resumeP", out:"outP" };
+
+function openPunchEditModal(row, field){
+  const punch = row[FIELD_KEY[field]];
+  if(!punch) return;
+  const modal = document.getElementById("punch-modal");
+  document.getElementById("punch-modal-title").textContent = `Modifier : ${row.name} — ${FIELD_LABELS[field]}`;
+  document.getElementById("punch-modal-id").value = punch.id;
+  document.getElementById("punch-modal-employee").value = row.employeeId;
+  document.getElementById("punch-modal-type").value = field;
+  document.getElementById("punch-modal-mode").value = "edit";
+  const d = punch.timestamp.toDate();
+  document.getElementById("punch-modal-time").value = pad(d.getHours())+":"+pad(d.getMinutes());
+  document.getElementById("punch-modal-delete-btn").style.display = "inline-block";
+  modal.classList.add("show");
+}
+
+function openPunchAddModal(row, field){
+  const modal = document.getElementById("punch-modal");
+  document.getElementById("punch-modal-title").textContent = `Ajouter : ${row.name} — ${FIELD_LABELS[field]}`;
+  document.getElementById("punch-modal-id").value = "";
+  document.getElementById("punch-modal-employee").value = row.employeeId;
+  document.getElementById("punch-modal-type").value = field;
+  document.getElementById("punch-modal-mode").value = "add";
+  document.getElementById("punch-modal-time").value = "12:00";
+  document.getElementById("punch-modal-delete-btn").style.display = "none";
+  modal.classList.add("show");
+}
+
+document.getElementById("punch-modal-cancel").addEventListener("click", ()=>{
+  document.getElementById("punch-modal").classList.remove("show");
+});
+
+document.getElementById("punch-modal-save").addEventListener("click", async ()=>{
+  const mode = document.getElementById("punch-modal-mode").value;
+  const id = document.getElementById("punch-modal-id").value;
+  const employeeId = document.getElementById("punch-modal-employee").value;
+  const type = document.getElementById("punch-modal-type").value;
+  const timeVal = document.getElementById("punch-modal-time").value; // "HH:MM"
+  if(!timeVal){ showToast("Choisissez une heure"); return; }
+
+  const [h,m] = timeVal.split(":").map(Number);
+  const newDate = new Date(controlDate);
+  newDate.setHours(h, m, 0, 0);
+
+  try{
+    if(mode === "edit"){
+      await db.collection("punches").doc(id).update({
+        timestamp: firebase.firestore.Timestamp.fromDate(newDate)
+      });
+      showToast("Pointage modifié ✓");
+    } else {
+      const emp = state.employees.find(e=>e.id===employeeId);
+      await db.collection("punches").add({
+        employeeId: employeeId,
+        employeeName: emp ? emp.name : "",
+        type: type,
+        timestamp: firebase.firestore.Timestamp.fromDate(newDate)
+      });
+      showToast("Pointage ajouté ✓");
+    }
+    document.getElementById("punch-modal").classList.remove("show");
+    renderControlTable();
+  }catch(e){
+    console.error(e);
+    showToast("Erreur lors de l'enregistrement");
+  }
+});
+
+document.getElementById("punch-modal-delete-btn").addEventListener("click", async ()=>{
+  const id = document.getElementById("punch-modal-id").value;
+  if(!id) return;
+  if(!confirm("Supprimer définitivement ce pointage ?")) return;
+  try{
+    await db.collection("punches").doc(id).delete();
+    showToast("Pointage supprimé ✓");
+    document.getElementById("punch-modal").classList.remove("show");
+    renderControlTable();
+  }catch(e){
+    console.error(e);
+    showToast("Erreur lors de la suppression");
+  }
 });
 
 document.getElementById("control-export-btn").addEventListener("click", ()=>{
