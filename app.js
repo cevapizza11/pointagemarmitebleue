@@ -843,16 +843,19 @@ document.getElementById("refresh-today-btn").addEventListener("click", renderTod
 function renderEmployeesTable(){
   const tbody = document.getElementById("employees-table-body");
   if(state.employees.length === 0){
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:rgba(30,38,36,0.4);padding:30px;">Aucun équipier. Cliquez sur "+ Ajouter".</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:rgba(30,38,36,0.4);padding:30px;">Aucun équipier. Cliquez sur "+ Ajouter".</td></tr>`;
     return;
   }
+  const CONTRACT_LABELS = { temps_plein:"Temps plein", temps_partiel:"Temps partiel" };
   tbody.innerHTML = state.employees.map(emp=>{
     const {status} = lastStatusFor(emp.id);
     const statusPill = status==="in" ? `<span class="pill pill-in">En service</span>`
       : status==="pause" ? `<span class="pill pill-pause">En pause</span>`
       : `<span class="pill pill-out">Hors service</span>`;
+    const contractLabel = emp.contractType ? `${CONTRACT_LABELS[emp.contractType]} · ${emp.contractHours}h` : "—";
     return `<tr>
       <td><b>${escapeHtml(emp.name)}</b></td>
+      <td>${contractLabel}</td>
       <td>${emp.pinHash ? "✅ Oui" : "— Pas encore"}</td>
       <td>${emp.plannedTime || "—"}</td>
       <td>${statusPill}</td>
@@ -895,11 +898,15 @@ function openEmployeeModal(id){
     title.textContent = "Modifier l'équipier";
     document.getElementById("emp-id-field").value = emp.id;
     document.getElementById("emp-name-field").value = emp.name;
+    document.getElementById("emp-contract-type-field").value = emp.contractType || "";
+    document.getElementById("emp-contract-hours-field").value = emp.contractHours || "";
     document.getElementById("emp-time-field").value = emp.plannedTime || "";
   } else {
     title.textContent = "Ajouter un équipier";
     document.getElementById("emp-id-field").value = "";
     document.getElementById("emp-name-field").value = "";
+    document.getElementById("emp-contract-type-field").value = "";
+    document.getElementById("emp-contract-hours-field").value = "";
     document.getElementById("emp-time-field").value = "";
   }
   modal.classList.add("show");
@@ -911,16 +918,28 @@ function closeEmployeeModal(){
 document.getElementById("emp-modal-save").addEventListener("click", async ()=>{
   const id = document.getElementById("emp-id-field").value;
   const name = document.getElementById("emp-name-field").value.trim();
+  const contractType = document.getElementById("emp-contract-type-field").value;
+  const contractHoursRaw = document.getElementById("emp-contract-hours-field").value;
+  const contractHours = contractHoursRaw ? parseFloat(contractHoursRaw) : null;
   const plannedTime = document.getElementById("emp-time-field").value;
+
   if(!name){ showToast("Le nom est obligatoire"); return; }
+  if(!contractType){ showToast("Le type de contrat est obligatoire"); return; }
+  if(!contractHours || contractHours <= 0){ showToast("Les heures contractuelles sont obligatoires"); return; }
+  if(contractType === "temps_partiel" && contractHours >= 35){
+    showToast("Un temps partiel doit être inférieur à 35h/semaine"); return;
+  }
+  if(contractType === "temps_plein" && contractHours > 48){
+    showToast("Un temps plein ne peut pas dépasser 48h/semaine"); return;
+  }
 
   try{
     if(id){
-      await db.collection("employees").doc(id).update({ name, plannedTime });
+      await db.collection("employees").doc(id).update({ name, contractType, contractHours, plannedTime });
       showToast("Équipier modifié ✓");
     } else {
       await db.collection("employees").add({
-        name, plannedTime, active:true, pinHash:null,
+        name, contractType, contractHours, plannedTime, active:true, pinHash:null,
         createdAt: firebase.firestore.Timestamp.now()
       });
       showToast("Équipier ajouté ✓");

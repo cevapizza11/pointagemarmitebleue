@@ -356,7 +356,7 @@
           <button class="btn btn-primary btn-sm" id="add-employee-btn">+ Ajouter un équipier</button>
         </div>
         <table>
-          <thead><tr><th>Nom</th><th>PIN défini</th><th>Heure prévue</th><th>Statut</th><th></th></tr></thead>
+          <thead><tr><th>Nom</th><th>Contrat</th><th>PIN défini</th><th>Heure prévue</th><th>Statut</th><th></th></tr></thead>
           <tbody id="employees-table-body"></tbody>
         </table>
       </div>
@@ -409,6 +409,18 @@
       <div class="field">
         <label>Prénom et nom</label>
         <input type="text" id="emp-name-field" placeholder="Ex : Léa Dupont">
+      </div>
+      <div class="field">
+        <label>Type de contrat</label>
+        <select id="emp-contract-type-field">
+          <option value="">— Choisir —</option>
+          <option value="temps_plein">Temps plein</option>
+          <option value="temps_partiel">Temps partiel</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Heures hebdomadaires contractuelles</label>
+        <input type="number" id="emp-contract-hours-field" placeholder="Ex : 35" min="1" max="48" step="0.5">
       </div>
       <div class="field">
         <label>Heure d'arrivée prévue (optionnel)</label>
