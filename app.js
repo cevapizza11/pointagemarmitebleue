@@ -13,7 +13,6 @@ const firebaseConfig = {
   messagingSenderId: "483578019330",
   appId: "1:483578019330:web:f15b69bfd7d652b773711b"
 };
-
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
@@ -37,7 +36,11 @@ let state = {
 };
 
 // ---------- UTIL ----------
-const ANOMALY_THRESHOLD_MS = 5 * 60 * 60 * 1000; // 5h : au-delà, une session est considérée comme anomalie
+const ANOMALY_THRESHOLD_MS = 5 * 60 * 60 * 1000;  // 5h : session anormalement longue (probable oubli de pointage)
+const MAX_DAILY_WORK_MS = 10 * 60 * 60 * 1000;     // 10h : durée de travail effectif max/jour (Code du travail)
+const MAX_AMPLITUDE_MS = 13 * 60 * 60 * 1000;      // 13h : amplitude max de la journée (prise de poste → fin)
+const MIN_DAILY_REST_MS = 11 * 60 * 60 * 1000;     // 11h : repos quotidien minimum entre 2 journées
+const MAX_WEEKLY_WORK_MS = 48 * 60 * 60 * 1000;    // 48h : plafond absolu hebdomadaire
 
 function pad(n){ return n.toString().padStart(2,"0"); }
 function nowParts(){
@@ -164,24 +167,189 @@ function isSameDay(a,b){
   return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
 }
 
-function showAnomalyPopupIfNeeded(rows){
-  const anomalies = rows.filter(r=>r.anomaly);
-  if(anomalies.length === 0) return;
+const LEGAL_ANOMALY_LABELS = {
+  amplitude: "Amplitude > 13h",
+  daily_work: "Travail effectif > 10h/jour",
+  daily_rest: "Repos quotidien < 11h",
+  weekly_max: "Plafond 48h/semaine dépassé",
+  complementary: "Heures complémentaires (temps partiel)"
+};
+
+function showAnomalyPopupIfNeeded(rows, legalAnomalies){
+  const sessionAnomalies = rows.filter(r=>r.anomaly);
+  const hasLegal = legalAnomalies && legalAnomalies.length > 0;
+  if(sessionAnomalies.length === 0 && !hasLegal) return;
 
   const modal = document.getElementById("anomaly-modal");
   const list = document.getElementById("anomaly-list");
   document.getElementById("anomaly-modal-title").textContent = "⚠ Anomalies détectées ce jour-là";
-  list.innerHTML = anomalies.map(r=>`
+
+  let html = "";
+
+  sessionAnomalies.forEach(r=>{
+    html += `
     <div class="anomaly-item">
       <div class="anomaly-item-name">${escapeHtml(r.name)}${r.sessionLabel ? ` · ${r.sessionLabel}` : ""}</div>
-      <div class="anomaly-item-detail">${r.inTime} → ${r.outTime !== "—" ? r.outTime : "toujours en service"} · <b>${fmtDuration(r.totalMs)}</b></div>
-    </div>`).join("");
+      <div class="anomaly-item-detail">Session anormalement longue : ${r.inTime} → ${r.outTime !== "—" ? r.outTime : "toujours en service"} · <b>${fmtDuration(r.totalMs)}</b><br>Vérifiez qu'il ne s'agit pas d'un oubli de pointage.</div>
+    </div>`;
+  });
+
+  if(hasLegal){
+    legalAnomalies.forEach(a=>{
+      html += `
+      <div class="anomaly-item anomaly-item-legal">
+        <div class="anomaly-item-name">${escapeHtml(a.name)} · <span style="color:var(--danger);">${LEGAL_ANOMALY_LABELS[a.type] || "Seuil légal dépassé"}</span></div>
+        <div class="anomaly-item-detail">${escapeHtml(a.detail)}</div>
+      </div>`;
+    });
+  }
+
+  list.innerHTML = html;
   modal.classList.add("show");
 }
 
 document.getElementById("anomaly-modal-close").addEventListener("click", ()=>{
   document.getElementById("anomaly-modal").classList.remove("show");
 });
+
+// ============================================================
+// GARDE-FOUS LÉGAUX (Code du travail)
+// ============================================================
+// Calcule, pour une liste de pointages déjà triés par heure, le temps de travail
+// effectif total (ms) en traitant in/resume comme "ouverture" et pause/out comme "fermeture".
+function effectiveWorkMs(sortedPunches){
+  let total = 0, openStart = null;
+  sortedPunches.forEach(p=>{
+    if(p.type==="in" || p.type==="resume") openStart = p.timestamp.toMillis();
+    else if((p.type==="pause" || p.type==="out") && openStart!==null){
+      total += p.timestamp.toMillis() - openStart;
+      openStart = null;
+    }
+  });
+  return total;
+}
+
+// Amplitude = du tout premier pointage au tout dernier pointage de la journée
+function amplitudeMs(sortedPunches){
+  if(sortedPunches.length < 2) return 0;
+  return sortedPunches[sortedPunches.length-1].timestamp.toMillis() - sortedPunches[0].timestamp.toMillis();
+}
+
+// Récupère tous les pointages entre deux dates (incluses), tous employés confondus
+async function fetchPunchesBetween(startDate, endDate){
+  const snap = await db.collection("punches")
+    .where("timestamp",">=", firebase.firestore.Timestamp.fromDate(startDate))
+    .where("timestamp","<=", firebase.firestore.Timestamp.fromDate(endDate))
+    .orderBy("timestamp","asc")
+    .get();
+  return snap.docs.map(d=>({id:d.id, ...d.data()}));
+}
+
+// Vérifie les garde-fous légaux pour le jour affiché (controlDate) :
+// amplitude >13h, travail effectif >10h/jour, repos <11h avec la veille, >48h sur 7 jours glissants,
+// et heures complémentaires temps partiel (>10% du contrat) sur la semaine glissante.
+async function checkLegalAnomalies(refDate){
+  const legalAnomalies = [];
+
+  const dayStart = new Date(refDate); dayStart.setHours(0,0,0,0);
+  const dayEnd = new Date(refDate); dayEnd.setHours(23,59,59,999);
+  const prevDayStart = new Date(dayStart); prevDayStart.setDate(prevDayStart.getDate()-1);
+  const weekStart = new Date(dayStart); weekStart.setDate(weekStart.getDate()-6); // 7 jours glissants incl. refDate
+
+  let todayP, prevDayP, weekP;
+  try{
+    [todayP, prevDayP, weekP] = await Promise.all([
+      fetchPunchesBetween(dayStart, dayEnd),
+      fetchPunchesBetween(prevDayStart, dayStart),
+      fetchPunchesBetween(weekStart, dayEnd)
+    ]);
+  }catch(e){
+    console.error("checkLegalAnomalies fetch error", e);
+    return legalAnomalies;
+  }
+
+  // --- Regroupement par employé pour le jour affiché ---
+  const byEmpToday = {};
+  todayP.forEach(p=>{
+    if(!byEmpToday[p.employeeId]) byEmpToday[p.employeeId] = { name:p.employeeName, punches:[] };
+    byEmpToday[p.employeeId].punches.push(p);
+  });
+
+  Object.entries(byEmpToday).forEach(([empId, data])=>{
+    const sorted = [...data.punches].sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+
+    // Amplitude >13h
+    const amp = amplitudeMs(sorted);
+    if(amp > MAX_AMPLITUDE_MS){
+      legalAnomalies.push({
+        type:"amplitude", name:data.name,
+        detail:`Amplitude de la journée : ${fmtDuration(amp)} (max légal 13h)`
+      });
+    }
+
+    // Travail effectif >10h/jour
+    const work = effectiveWorkMs(sorted);
+    if(work > MAX_DAILY_WORK_MS){
+      legalAnomalies.push({
+        type:"daily_work", name:data.name,
+        detail:`Travail effectif : ${fmtDuration(work)} sur la journée (max légal 10h)`
+      });
+    }
+  });
+
+  // --- Repos quotidien <11h : comparer dernière sortie de la veille à 1ère entrée du jour ---
+  const byEmpPrev = {};
+  prevDayP.forEach(p=>{
+    if(!byEmpPrev[p.employeeId]) byEmpPrev[p.employeeId] = [];
+    byEmpPrev[p.employeeId].push(p);
+  });
+  Object.entries(byEmpToday).forEach(([empId, data])=>{
+    const todaySorted = [...data.punches].sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+    const firstInToday = todaySorted.find(p=>p.type==="in");
+    const prevPunches = byEmpPrev[empId];
+    if(!firstInToday || !prevPunches || prevPunches.length===0) return;
+    const prevSorted = [...prevPunches].sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+    const lastOfPrevDay = prevSorted[prevSorted.length-1];
+    const restMs = firstInToday.timestamp.toMillis() - lastOfPrevDay.timestamp.toMillis();
+    if(restMs >= 0 && restMs < MIN_DAILY_REST_MS){
+      legalAnomalies.push({
+        type:"daily_rest", name:data.name,
+        detail:`Repos entre les deux journées : ${fmtDuration(restMs)} seulement (minimum légal 11h)`
+      });
+    }
+  });
+
+  // --- >48h sur 7 jours glissants + heures complémentaires temps partiel ---
+  const byEmpWeek = {};
+  weekP.forEach(p=>{
+    if(!byEmpWeek[p.employeeId]) byEmpWeek[p.employeeId] = { name:p.employeeName, punches:[] };
+    byEmpWeek[p.employeeId].punches.push(p);
+  });
+  Object.entries(byEmpWeek).forEach(([empId, data])=>{
+    const sorted = [...data.punches].sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+    const weekWork = effectiveWorkMs(sorted);
+    if(weekWork > MAX_WEEKLY_WORK_MS){
+      legalAnomalies.push({
+        type:"weekly_max", name:data.name,
+        detail:`${fmtDuration(weekWork)} sur les 7 derniers jours (plafond légal 48h)`
+      });
+    }
+
+    const emp = state.employees.find(e=>e.id===empId);
+    if(emp && emp.contractType === "temps_partiel" && emp.contractHours){
+      const contractMs = emp.contractHours * 60 * 60 * 1000;
+      const thresholdMs = contractMs * 1.10; // 10% d'heures complémentaires max
+      if(weekWork > thresholdMs){
+        legalAnomalies.push({
+          type:"complementary", name:data.name,
+          detail:`${fmtDuration(weekWork)} cette semaine pour un contrat de ${emp.contractHours}h (dépasse les 10% d'heures complémentaires autorisées)`
+        });
+      }
+    }
+  });
+
+  return legalAnomalies;
+}
 
 async function renderControlTable(){
   const tbody = document.getElementById("control-table-body");
@@ -316,7 +484,8 @@ async function renderControlTable(){
     <div class="stat-card"><div class="stat-num">${fmtDuration(totalDayMs)}</div><div class="stat-label">Total heures du jour</div></div>
   `;
 
-  showAnomalyPopupIfNeeded(rows);
+  const legalAnomalies = await checkLegalAnomalies(controlDate);
+  showAnomalyPopupIfNeeded(rows, legalAnomalies);
 }
 
 document.getElementById("control-prev-btn").addEventListener("click", ()=>{
