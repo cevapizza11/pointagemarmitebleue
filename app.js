@@ -13,6 +13,7 @@ const firebaseConfig = {
   messagingSenderId: "483578019330",
   appId: "1:483578019330:web:f15b69bfd7d652b773711b"
 };
+
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 
@@ -172,8 +173,184 @@ const LEGAL_ANOMALY_LABELS = {
   daily_work: "Travail effectif > 10h/jour",
   daily_rest: "Repos quotidien < 11h",
   weekly_max: "Plafond 48h/semaine dépassé",
-  complementary: "Heures complémentaires (temps partiel)"
+  complementary: "Heures complémentaires (temps partiel)",
+  long_session: "Session anormalement longue (>5h sans pointage)"
 };
+
+// Enregistre les anomalies détectées dans Firestore avec un ID stable (pas de doublons).
+// Chaque anomalie garde sa date de première détection (detectedAt) si elle existe déjà.
+async function persistAnomalies(sessionAnomalies, legalAnomalies){
+  const all = [
+    ...sessionAnomalies.map(r=>({
+      type:"long_session", employeeId:r.employeeId, name:r.name, refDateKey:r.refDateKey,
+      detail:`Session ${r.inTime} → ${r.outTime !== "—" ? r.outTime : "en cours"} : ${fmtDuration(r.totalMs)} sans pointage intermédiaire`,
+      docId: `${r.employeeId}_long_session_${r.refDateKey}_${r.sessionIdx}`
+    })),
+    ...legalAnomalies.map(a=>({
+      ...a,
+      docId: `${a.employeeId}_${a.type}_${a.refDateKey}`
+    }))
+  ];
+
+  for(const a of all){
+    try{
+      const ref = db.collection("anomalies").doc(a.docId);
+      const existing = await ref.get();
+      if(!existing.exists){
+        await ref.set({
+          type:a.type, employeeId:a.employeeId, name:a.name,
+          refDateKey:a.refDateKey, detail:a.detail,
+          detectedAt: firebase.firestore.Timestamp.now()
+        });
+      }
+    }catch(e){
+      console.error("persistAnomalies error", e);
+    }
+  }
+}
+
+// Supprime de Firestore les anomalies enregistrées pour ce jour qui ne sont plus détectées
+// (le pointage a été corrigé depuis). Compare les docId actuellement valides à ceux en base.
+async function cleanupResolvedAnomalies(refDateKey, sessionAnomalies, legalAnomalies){
+  const stillValidIds = new Set([
+    ...sessionAnomalies.map(r=>`${r.employeeId}_long_session_${r.refDateKey}_${r.sessionIdx}`),
+    ...legalAnomalies.map(a=>`${a.employeeId}_${a.type}_${a.refDateKey}`)
+  ]);
+
+  try{
+    const snap = await db.collection("anomalies").where("refDateKey","==", refDateKey).get();
+    const deletions = [];
+    snap.forEach(doc=>{
+      if(!stillValidIds.has(doc.id)) deletions.push(db.collection("anomalies").doc(doc.id).delete());
+    });
+    if(deletions.length>0) await Promise.all(deletions);
+  }catch(e){
+    console.error("cleanupResolvedAnomalies error", e);
+  }
+}
+
+// Scanne une plage de jours (du plus ancien au plus récent) et synchronise les anomalies
+// détectées (persiste les nouvelles, supprime les résolues), jour par jour.
+async function scanAndSyncAnomalies(daysBack=7){
+  for(let i=daysBack; i>=0; i--){
+    const d = new Date(); d.setDate(d.getDate()-i);
+    await syncAnomaliesForDay(d);
+  }
+}
+
+// Logique de détection + persistance + nettoyage pour un jour donné, sans toucher à l'affichage du tableau.
+async function syncAnomaliesForDay(refDate){
+  const refDateKey = todayKey(refDate);
+  const dayStart = new Date(refDate); dayStart.setHours(0,0,0,0);
+  const dayEnd = new Date(refDate); dayEnd.setHours(23,59,59,999);
+
+  let dayPunches;
+  try{
+    dayPunches = await fetchPunchesBetween(dayStart, dayEnd);
+  }catch(e){ console.error("syncAnomaliesForDay fetch error", e); return; }
+
+  const byEmployee = {};
+  dayPunches.forEach(p=>{
+    if(!byEmployee[p.employeeId]) byEmployee[p.employeeId] = { name:p.employeeName, punches:[] };
+    byEmployee[p.employeeId].punches.push(p);
+  });
+
+  function splitIntoSessionsLocal(punchList){
+    const sorted = [...punchList].sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+    const sessions = []; let current = null;
+    sorted.forEach(p=>{
+      if(p.type === "in"){ current = { in:p, pause:null, resume:null, out:null }; sessions.push(current); }
+      else if(current){
+        if(p.type==="pause") current.pause = p;
+        else if(p.type==="resume") current.resume = p;
+        else if(p.type==="out") current.out = p;
+      } else {
+        current = { in:null, pause:null, resume:null, out:null };
+        if(p.type==="pause") current.pause = p;
+        else if(p.type==="resume") current.resume = p;
+        else if(p.type==="out") current.out = p;
+        sessions.push(current);
+      }
+    });
+    return sessions;
+  }
+  function sessionMs(s){
+    let total=0, openStart = s.in ? s.in.timestamp.toMillis() : null;
+    if(s.pause && openStart!==null){ total += s.pause.timestamp.toMillis()-openStart; openStart=null; }
+    if(s.resume){ openStart = s.resume.timestamp.toMillis(); }
+    if(s.out && openStart!==null){ total += s.out.timestamp.toMillis()-openStart; openStart=null; }
+    return total;
+  }
+
+  const sessionAnomalies = [];
+  Object.entries(byEmployee).forEach(([empId, data])=>{
+    const sessions = splitIntoSessionsLocal(data.punches);
+    sessions.forEach((s, idx)=>{
+      const ms = sessionMs(s);
+      if(ms > ANOMALY_THRESHOLD_MS){
+        sessionAnomalies.push({
+          employeeId: empId, name: data.name, refDateKey, sessionIdx: idx,
+          inTime: s.in ? fmtTime(s.in.timestamp.toDate()) : "—",
+          outTime: s.out ? fmtTime(s.out.timestamp.toDate()) : "—",
+          totalMs: ms
+        });
+      }
+    });
+  });
+
+  const legalAnomalies = await checkLegalAnomalies(refDate);
+  await persistAnomalies(sessionAnomalies, legalAnomalies);
+  await cleanupResolvedAnomalies(refDateKey, sessionAnomalies, legalAnomalies);
+}
+
+// ============================================================
+// ADMIN — ONGLET ANOMALIES (récap persistant)
+// ============================================================
+async function renderAnomaliesTab(){
+  const tbody = document.getElementById("anomalies-table-body");
+  const statsEl = document.getElementById("anomalies-stats");
+  tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Chargement…</td></tr>`;
+
+  let snap;
+  try{
+    snap = await db.collection("anomalies").orderBy("detectedAt","desc").get();
+  }catch(e){
+    console.error(e);
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:30px;color:var(--danger);">Erreur de chargement</td></tr>`;
+    return;
+  }
+
+  const items = snap.docs.map(d=>({id:d.id, ...d.data()}));
+
+  if(items.length === 0){
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;padding:40px;color:rgba(30,38,36,0.4);">✅ Aucune anomalie en attente</td></tr>`;
+  } else {
+    tbody.innerHTML = items.map(a=>{
+      const dateLabel = a.refDateKey ? a.refDateKey.split("-").reverse().join("/") : "—";
+      const typeLabel = LEGAL_ANOMALY_LABELS[a.type] || a.type;
+      const isLegal = a.type !== "long_session";
+      return `<tr${isLegal ? ' style="background:rgba(168,65,43,0.04);"' : ""}>
+        <td><b>${escapeHtml(a.name)}</b></td>
+        <td>${dateLabel}</td>
+        <td>${isLegal ? `<span style="color:var(--danger);font-weight:600;">${typeLabel}</span>` : typeLabel}</td>
+        <td>${escapeHtml(a.detail)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  const legalCount = items.filter(a=>a.type!=="long_session").length;
+  statsEl.innerHTML = `
+    <div class="stat-card"><div class="stat-num">${items.length}</div><div class="stat-label">Anomalies en attente</div></div>
+    <div class="stat-card"><div class="stat-num">${legalCount}</div><div class="stat-label">dont seuils légaux dépassés</div></div>
+  `;
+}
+
+document.getElementById("anomalies-refresh-btn").addEventListener("click", async ()=>{
+  showToast("Vérification en cours…");
+  await scanAndSyncAnomalies(30);
+  await renderAnomaliesTab();
+  showToast("Anomalies à jour ✓");
+});
 
 function showAnomalyPopupIfNeeded(rows, legalAnomalies){
   const sessionAnomalies = rows.filter(r=>r.anomaly);
@@ -250,6 +427,7 @@ async function fetchPunchesBetween(startDate, endDate){
 // et heures complémentaires temps partiel (>10% du contrat) sur la semaine glissante.
 async function checkLegalAnomalies(refDate){
   const legalAnomalies = [];
+  const refDateKey = todayKey(refDate);
 
   const dayStart = new Date(refDate); dayStart.setHours(0,0,0,0);
   const dayEnd = new Date(refDate); dayEnd.setHours(23,59,59,999);
@@ -282,7 +460,7 @@ async function checkLegalAnomalies(refDate){
     const amp = amplitudeMs(sorted);
     if(amp > MAX_AMPLITUDE_MS){
       legalAnomalies.push({
-        type:"amplitude", name:data.name,
+        type:"amplitude", employeeId:empId, name:data.name, refDateKey,
         detail:`Amplitude de la journée : ${fmtDuration(amp)} (max légal 13h)`
       });
     }
@@ -291,7 +469,7 @@ async function checkLegalAnomalies(refDate){
     const work = effectiveWorkMs(sorted);
     if(work > MAX_DAILY_WORK_MS){
       legalAnomalies.push({
-        type:"daily_work", name:data.name,
+        type:"daily_work", employeeId:empId, name:data.name, refDateKey,
         detail:`Travail effectif : ${fmtDuration(work)} sur la journée (max légal 10h)`
       });
     }
@@ -313,7 +491,7 @@ async function checkLegalAnomalies(refDate){
     const restMs = firstInToday.timestamp.toMillis() - lastOfPrevDay.timestamp.toMillis();
     if(restMs >= 0 && restMs < MIN_DAILY_REST_MS){
       legalAnomalies.push({
-        type:"daily_rest", name:data.name,
+        type:"daily_rest", employeeId:empId, name:data.name, refDateKey,
         detail:`Repos entre les deux journées : ${fmtDuration(restMs)} seulement (minimum légal 11h)`
       });
     }
@@ -330,7 +508,7 @@ async function checkLegalAnomalies(refDate){
     const weekWork = effectiveWorkMs(sorted);
     if(weekWork > MAX_WEEKLY_WORK_MS){
       legalAnomalies.push({
-        type:"weekly_max", name:data.name,
+        type:"weekly_max", employeeId:empId, name:data.name, refDateKey,
         detail:`${fmtDuration(weekWork)} sur les 7 derniers jours (plafond légal 48h)`
       });
     }
@@ -341,7 +519,7 @@ async function checkLegalAnomalies(refDate){
       const thresholdMs = contractMs * 1.10; // 10% d'heures complémentaires max
       if(weekWork > thresholdMs){
         legalAnomalies.push({
-          type:"complementary", name:data.name,
+          type:"complementary", employeeId:empId, name:data.name, refDateKey,
           detail:`${fmtDuration(weekWork)} cette semaine pour un contrat de ${emp.contractHours}h (dépasse les 10% d'heures complémentaires autorisées)`
         });
       }
@@ -420,6 +598,7 @@ async function renderControlTable(){
   }
 
   let rows = [];
+  const refDateKeyForRows = todayKey(controlDate);
   Object.entries(byEmployee).forEach(([empId, data])=>{
     const sessions = splitIntoSessions(data.punches);
     sessions.forEach((s, idx)=>{
@@ -427,7 +606,9 @@ async function renderControlTable(){
       rows.push({
         employeeId: empId,
         name: data.name,
+        refDateKey: refDateKeyForRows,
         sessionLabel: sessions.length > 1 ? `Passage ${idx+1}` : "",
+        sessionIdx: idx,
         inP: s.in, pauseP: s.pause, resumeP: s.resume, outP: s.out,
         inTime: s.in ? fmtTime(s.in.timestamp.toDate()) : "—",
         pauseTime: s.pause ? fmtTime(s.pause.timestamp.toDate()) : "—",
@@ -485,6 +666,9 @@ async function renderControlTable(){
   `;
 
   const legalAnomalies = await checkLegalAnomalies(controlDate);
+  const sessionAnomalies = rows.filter(r=>r.anomaly);
+  await persistAnomalies(sessionAnomalies, legalAnomalies);
+  await cleanupResolvedAnomalies(refDateKeyForRows, sessionAnomalies, legalAnomalies);
   showAnomalyPopupIfNeeded(rows, legalAnomalies);
 }
 
@@ -940,6 +1124,7 @@ function enterAdmin(){
   populateReportMonths();
   controlDate = new Date();
   renderControlTable();
+  scanAndSyncAnomalies(7).then(renderAnomaliesTab); // synchro silencieuse des 7 derniers jours
 }
 
 document.getElementById("admin-exit-btn").addEventListener("click", ()=>{
@@ -956,6 +1141,7 @@ document.querySelectorAll(".admin-tab").forEach(tab=>{
     document.getElementById("tab-"+tab.dataset.tab).classList.add("active");
     if(tab.dataset.tab === "reports") renderReportTable();
     if(tab.dataset.tab === "control") renderControlTable();
+    if(tab.dataset.tab === "anomalies") renderAnomaliesTab();
   });
 });
 

@@ -314,6 +314,7 @@
     <div class="admin-tabs">
       <div class="admin-tab active" data-tab="today">Aujourd'hui</div>
       <div class="admin-tab" data-tab="control">Contrôle des pointages</div>
+      <div class="admin-tab" data-tab="anomalies">Anomalies</div>
       <div class="admin-tab" data-tab="employees">Équipiers</div>
       <div class="admin-tab" data-tab="reports">Rapports mensuels</div>
       <div class="admin-tab" data-tab="settings">Réglages</div>
@@ -348,6 +349,18 @@
         <table>
           <thead><tr><th>Équipier</th><th>Entrée</th><th>Pause</th><th>Reprise</th><th>Sortie</th><th>Total</th></tr></thead>
           <tbody id="control-table-body"></tbody>
+        </table>
+      </div>
+
+      <div class="admin-section" id="tab-anomalies">
+        <div class="admin-row-title">
+          <div class="admin-h">Anomalies en attente</div>
+          <button class="btn btn-primary btn-sm" id="anomalies-refresh-btn">Revérifier (30 derniers jours)</button>
+        </div>
+        <div class="stat-cards" id="anomalies-stats"></div>
+        <table>
+          <thead><tr><th>Équipier</th><th>Date</th><th>Type</th><th>Détail</th></tr></thead>
+          <tbody id="anomalies-table-body"></tbody>
         </table>
       </div>
 
