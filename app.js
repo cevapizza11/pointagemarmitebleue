@@ -589,11 +589,19 @@ async function renderControlTable(){
     return sessions;
   }
 
+  // Calcule le temps de travail effectif d'une session en traitant TOUS ses pointages
+  // dans l'ordre chronologique (gère plusieurs pauses/reprises successives sans en perdre).
   function sessionDurationMs(s){
-    let total = 0, openStart = s.in ? s.in.timestamp.toMillis() : null;
-    if(s.pause && openStart!==null){ total += s.pause.timestamp.toMillis()-openStart; openStart=null; }
-    if(s.resume){ openStart = s.resume.timestamp.toMillis(); }
-    if(s.out && openStart!==null){ total += s.out.timestamp.toMillis()-openStart; openStart=null; }
+    const all = [s.in, s.pause, s.resume, s.out].filter(Boolean)
+      .sort((a,b)=>a.timestamp.toMillis()-b.timestamp.toMillis());
+    let total = 0, openStart = null;
+    all.forEach(p=>{
+      if(p.type==="in" || p.type==="resume") openStart = p.timestamp.toMillis();
+      else if((p.type==="pause" || p.type==="out") && openStart!==null){
+        total += p.timestamp.toMillis() - openStart;
+        openStart = null;
+      }
+    });
     return total;
   }
 
@@ -625,27 +633,39 @@ async function renderControlTable(){
   controlCache = rows;
 
   if(rows.length === 0){
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Aucun pointage ce jour-là</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:rgba(30,38,36,0.4);">Aucun pointage ce jour-là</td></tr>`;
   } else {
-    tbody.innerHTML = rows.map((r,i)=>{
-      const cell = (punch, time, type, label)=>{
-        if(punch){
-          return `<div class="punch-cell">
-            <span>${time}</span>
-            <button class="punch-edit-btn" data-row="${i}" data-field="${type}" title="Modifier ${label}">✎</button>
-          </div>`;
-        } else {
-          return `<button class="punch-add-btn" data-row="${i}" data-field="${type}" title="Ajouter ${label}">+ ${label}</button>`;
-        }
-      };
+    // Regrouper les sessions (rows) par équipier pour n'afficher qu'une seule ligne par personne
+    const byEmpDisplay = {};
+    rows.forEach((r, i)=>{
+      if(!byEmpDisplay[r.employeeId]) byEmpDisplay[r.employeeId] = { name:r.name, sessions:[] };
+      byEmpDisplay[r.employeeId].sessions.push({...r, rowIndex:i});
+    });
+
+    const cell = (punch, time, rowIndex, type, label)=>{
+      if(punch){
+        return `<div class="punch-cell">
+          <span>${time}</span>
+          <button class="punch-edit-btn" data-row="${rowIndex}" data-field="${type}" title="Modifier ${label}">✎</button>
+        </div>`;
+      } else {
+        return `<button class="punch-add-btn" data-row="${rowIndex}" data-field="${type}" title="Ajouter ${label}">+ ${label}</button>`;
+      }
+    };
+
+    tbody.innerHTML = Object.values(byEmpDisplay).map(emp=>{
+      const totalMs = emp.sessions.reduce((sum,s)=>sum+s.totalMs,0);
+      const hasIncomplete = emp.sessions.some(s=>s.incomplete);
+      const hasAnomaly = emp.sessions.some(s=>s.anomaly);
+
       return `
       <tr>
-        <td><b>${escapeHtml(r.name)}</b>${r.sessionLabel ? `<br><span style="font-size:11.5px;color:rgba(30,38,36,0.45);font-weight:600;">${r.sessionLabel}</span>` : ""}</td>
-        <td>${cell(r.inP, r.inTime, "in", "Entrée")}</td>
-        <td>${cell(r.pauseP, r.pauseTime, "pause", "Pause")}</td>
-        <td>${cell(r.resumeP, r.resumeTime, "resume", "Reprise")}</td>
-        <td>${cell(r.outP, r.outTime, "out", "Sortie")}</td>
-        <td>${r.totalMs>0 ? fmtDuration(r.totalMs) : "—"}${r.incomplete ? ' <span class="pill pill-late" style="margin-left:4px;">incomplet</span>' : ""}${r.anomaly ? ' <span class="pill pill-late" style="margin-left:4px;">⚠ anomalie</span>' : ""}</td>
+        <td><b>${escapeHtml(emp.name)}</b></td>
+        <td>${emp.sessions.map(s=>`<div class="slot-line">${cell(s.inP, s.inTime, s.rowIndex, "in", "Entrée")}</div>`).join("")}</td>
+        <td>${emp.sessions.map(s=>`<div class="slot-line">${cell(s.pauseP, s.pauseTime, s.rowIndex, "pause", "Pause")}</div>`).join("")}</td>
+        <td>${emp.sessions.map(s=>`<div class="slot-line">${cell(s.resumeP, s.resumeTime, s.rowIndex, "resume", "Reprise")}</div>`).join("")}</td>
+        <td>${emp.sessions.map(s=>`<div class="slot-line">${cell(s.outP, s.outTime, s.rowIndex, "out", "Sortie")}</div>`).join("")}</td>
+        <td><b>${totalMs>0 ? fmtDuration(totalMs) : "—"}</b>${hasIncomplete ? ' <span class="pill pill-late" style="margin-left:4px;">incomplet</span>' : ""}${hasAnomaly ? ' <span class="pill pill-late" style="margin-left:4px;">⚠ anomalie</span>' : ""}</td>
       </tr>`;
     }).join("");
 
