@@ -37,6 +37,8 @@ let state = {
 };
 
 // ---------- UTIL ----------
+const ANOMALY_THRESHOLD_MS = 5 * 60 * 60 * 1000; // 5h : au-delà, une session est considérée comme anomalie
+
 function pad(n){ return n.toString().padStart(2,"0"); }
 function nowParts(){
   const d = new Date();
@@ -81,6 +83,36 @@ function tickClock(){
 }
 setInterval(tickClock, 1000);
 tickClock();
+
+// ---------- ALERTE TEMPS RÉEL : équipier en service depuis plus de 5h ----------
+let liveAnomalyShownFor = new Set(); // évite de réafficher la pop-up pour le même équipier en boucle
+
+function checkLiveAnomalies(){
+  if(document.getElementById("screen-home").classList.contains("active") === false) return;
+  state.employees.forEach(emp=>{
+    const {status} = lastStatusFor(emp.id);
+    if(status === "out") { liveAnomalyShownFor.delete(emp.id); return; }
+    const ms = totalWorkedMs(emp.id);
+    if(ms > ANOMALY_THRESHOLD_MS && !liveAnomalyShownFor.has(emp.id)){
+      liveAnomalyShownFor.add(emp.id);
+      showLiveAnomalyBanner(emp.name, ms);
+    }
+  });
+}
+setInterval(checkLiveAnomalies, 60000);
+
+function showLiveAnomalyBanner(name, ms){
+  const modal = document.getElementById("anomaly-modal");
+  const list = document.getElementById("anomaly-list");
+  document.getElementById("anomaly-modal-title").textContent = "⚠ Anomalie détectée";
+  list.innerHTML = `
+    <div class="anomaly-item">
+      <div class="anomaly-item-name">${escapeHtml(name)}</div>
+      <div class="anomaly-item-detail">Toujours pointé(e) en service depuis plus de 5h (<b>${fmtDuration(ms)}</b>). Vérifiez qu'il ne s'agit pas d'un oubli de dépointage.</div>
+    </div>`;
+  modal.classList.add("show");
+}
+
 
 // ============================================================
 // FIRESTORE LISTENERS
@@ -131,6 +163,25 @@ function fmtControlDateLabel(d){
 function isSameDay(a,b){
   return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
 }
+
+function showAnomalyPopupIfNeeded(rows){
+  const anomalies = rows.filter(r=>r.anomaly);
+  if(anomalies.length === 0) return;
+
+  const modal = document.getElementById("anomaly-modal");
+  const list = document.getElementById("anomaly-list");
+  document.getElementById("anomaly-modal-title").textContent = "⚠ Anomalies détectées ce jour-là";
+  list.innerHTML = anomalies.map(r=>`
+    <div class="anomaly-item">
+      <div class="anomaly-item-name">${escapeHtml(r.name)}${r.sessionLabel ? ` · ${r.sessionLabel}` : ""}</div>
+      <div class="anomaly-item-detail">${r.inTime} → ${r.outTime !== "—" ? r.outTime : "toujours en service"} · <b>${fmtDuration(r.totalMs)}</b></div>
+    </div>`).join("");
+  modal.classList.add("show");
+}
+
+document.getElementById("anomaly-modal-close").addEventListener("click", ()=>{
+  document.getElementById("anomaly-modal").classList.remove("show");
+});
 
 async function renderControlTable(){
   const tbody = document.getElementById("control-table-body");
@@ -204,6 +255,7 @@ async function renderControlTable(){
   Object.entries(byEmployee).forEach(([empId, data])=>{
     const sessions = splitIntoSessions(data.punches);
     sessions.forEach((s, idx)=>{
+      const ms = sessionDurationMs(s);
       rows.push({
         employeeId: empId,
         name: data.name,
@@ -213,8 +265,9 @@ async function renderControlTable(){
         pauseTime: s.pause ? fmtTime(s.pause.timestamp.toDate()) : "—",
         resumeTime: s.resume ? fmtTime(s.resume.timestamp.toDate()) : "—",
         outTime: s.out ? fmtTime(s.out.timestamp.toDate()) : "—",
-        totalMs: sessionDurationMs(s),
-        incomplete: !s.in || !s.out
+        totalMs: ms,
+        incomplete: !s.in || !s.out,
+        anomaly: ms > ANOMALY_THRESHOLD_MS
       });
     });
   });
@@ -243,7 +296,7 @@ async function renderControlTable(){
         <td>${cell(r.pauseP, r.pauseTime, "pause", "Pause")}</td>
         <td>${cell(r.resumeP, r.resumeTime, "resume", "Reprise")}</td>
         <td>${cell(r.outP, r.outTime, "out", "Sortie")}</td>
-        <td>${r.totalMs>0 ? fmtDuration(r.totalMs) : "—"}${r.incomplete ? ' <span class="pill pill-late" style="margin-left:4px;">incomplet</span>' : ""}</td>
+        <td>${r.totalMs>0 ? fmtDuration(r.totalMs) : "—"}${r.incomplete ? ' <span class="pill pill-late" style="margin-left:4px;">incomplet</span>' : ""}${r.anomaly ? ' <span class="pill pill-late" style="margin-left:4px;">⚠ anomalie</span>' : ""}</td>
       </tr>`;
     }).join("");
 
@@ -262,6 +315,8 @@ async function renderControlTable(){
     <div class="stat-card"><div class="stat-num">${rows.length}</div><div class="stat-label">Passages enregistrés</div></div>
     <div class="stat-card"><div class="stat-num">${fmtDuration(totalDayMs)}</div><div class="stat-label">Total heures du jour</div></div>
   `;
+
+  showAnomalyPopupIfNeeded(rows);
 }
 
 document.getElementById("control-prev-btn").addEventListener("click", ()=>{

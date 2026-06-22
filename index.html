@@ -198,6 +198,14 @@
   }
   .punch-add-btn:hover,.punch-add-btn:active{border-color:var(--terracotta);color:var(--terracotta);background:rgba(193,96,47,0.06);}
 
+  .anomaly-modal .modal{border-top:5px solid var(--danger);}
+  .anomaly-item{
+    background:rgba(168,65,43,0.06);border-radius:10px;padding:12px 14px;margin-bottom:10px;
+  }
+  .anomaly-item:last-child{margin-bottom:0;}
+  .anomaly-item-name{font-weight:700;color:var(--ink);font-size:14.5px;margin-bottom:3px;}
+  .anomaly-item-detail{font-size:13px;color:rgba(30,38,36,0.65);line-height:1.4;}
+
   .modal-overlay{
     position:fixed;inset:0;background:rgba(16,37,40,0.55);
     display:flex;align-items:center;justify-content:center;z-index:200;
@@ -431,6 +439,17 @@
           <button class="btn btn-ghost" id="punch-modal-cancel">Annuler</button>
           <button class="btn btn-primary" id="punch-modal-save">Enregistrer</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== ANOMALY MODAL ===================== -->
+  <div class="modal-overlay anomaly-modal" id="anomaly-modal">
+    <div class="modal">
+      <h3 id="anomaly-modal-title">⚠ Anomalies détectées</h3>
+      <div id="anomaly-list"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="anomaly-modal-close">Compris</button>
       </div>
     </div>
   </div>
