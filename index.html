@@ -207,6 +207,14 @@
   .anomaly-item-detail{font-size:13px;color:rgba(30,38,36,0.65);line-height:1.4;}
   .anomaly-item-legal{background:rgba(168,65,43,0.1);border:1px solid rgba(168,65,43,0.25);}
 
+  .rules-info-box{
+    background:rgba(27,58,63,0.05);border:1px solid var(--line);border-radius:14px;
+    padding:16px 20px;margin-bottom:20px;
+  }
+  .rules-info-title{font-weight:700;font-size:13px;color:var(--teal);margin-bottom:8px;text-transform:uppercase;letter-spacing:.03em;}
+  .rules-info-list{margin:0;padding-left:18px;font-size:13.5px;color:rgba(30,38,36,0.75);line-height:1.7;}
+  .rules-info-list li{margin-bottom:2px;}
+
   .modal-overlay{
     position:fixed;inset:0;background:rgba(16,37,40,0.55);
     display:flex;align-items:center;justify-content:center;z-index:200;
@@ -356,6 +364,17 @@
         <div class="admin-row-title">
           <div class="admin-h">Anomalies en attente</div>
           <button class="btn btn-primary btn-sm" id="anomalies-refresh-btn">Revérifier (30 derniers jours)</button>
+        </div>
+        <div class="rules-info-box">
+          <div class="rules-info-title">Seuils surveillés automatiquement</div>
+          <ul class="rules-info-list">
+            <li><b>Session sans pointage &gt; 5h</b> — probable oubli de dépointage</li>
+            <li><b>Amplitude journalière &gt; 13h</b> — entre la prise de poste et la fin de service</li>
+            <li><b>Travail effectif &gt; 10h/jour</b> — durée maximale quotidienne</li>
+            <li><b>Repos quotidien &lt; 11h</b> — entre la sortie d'un jour et l'entrée du lendemain</li>
+            <li><b>Plafond hebdomadaire &gt; 48h</b> — sur 7 jours glissants</li>
+            <li><b>Heures complémentaires (temps partiel)</b> — au-delà de 10% des heures contractuelles, sur 7 jours glissants</li>
+          </ul>
         </div>
         <div class="stat-cards" id="anomalies-stats"></div>
         <table>
