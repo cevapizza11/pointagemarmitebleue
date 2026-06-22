@@ -418,7 +418,7 @@ async function fetchPunchesBetween(startDate, endDate){
     .where("timestamp",">=", firebase.firestore.Timestamp.fromDate(startDate))
     .where("timestamp","<=", firebase.firestore.Timestamp.fromDate(endDate))
     .orderBy("timestamp","asc")
-    .get();
+    .get({source: "server"}); // lecture serveur forcée : évite un cache local périmé juste après une modification
   return snap.docs.map(d=>({id:d.id, ...d.data()}));
 }
 
@@ -546,7 +546,7 @@ async function renderControlTable(){
       .where("timestamp",">=", firebase.firestore.Timestamp.fromDate(start))
       .where("timestamp","<=", firebase.firestore.Timestamp.fromDate(end))
       .orderBy("timestamp","asc")
-      .get();
+      .get({source: "server"});
   }catch(e){
     console.error(e);
     tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--danger);">Erreur de chargement</td></tr>`;
