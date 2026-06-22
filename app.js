@@ -218,7 +218,7 @@ async function cleanupResolvedAnomalies(refDateKey, sessionAnomalies, legalAnoma
   ]);
 
   try{
-    const snap = await db.collection("anomalies").where("refDateKey","==", refDateKey).get();
+    const snap = await db.collection("anomalies").where("refDateKey","==", refDateKey).get({source: "server"});
     const deletions = [];
     snap.forEach(doc=>{
       if(!stillValidIds.has(doc.id)) deletions.push(db.collection("anomalies").doc(doc.id).delete());
